@@ -10,9 +10,10 @@ name: 29878 - Docker Build & Deploy
 
 # Skripta se proži samo ob potisku na vejo main
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["29878 - Testiranje"]
+    types:
+      - completed
 
 jobs:
 
@@ -20,6 +21,7 @@ jobs:
   # POSEL: Preveri napake, zgradi Docker sliko in jo potisni na DockerHub
   # ============================================================
   docker-build-push:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     name: Zgradi in objavi Docker zabojnik
     runs-on: self-hosted   # Teče na našem lokalnem self-hosted runnerju
 
