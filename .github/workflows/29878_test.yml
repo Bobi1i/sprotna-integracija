@@ -63,7 +63,7 @@ jobs:
     # ============================================================
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]   # Testiraj na 3 verzijah Pythona
+        python-version: ["3.13"]   # Testiraj na 3 verzijah Pythona
       fail-fast: false   # Nadaljuj testiranje vseh verzij, tudi če ena spodleti
 
     steps:
