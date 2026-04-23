@@ -6,4 +6,3 @@ def deli(a, b):
  
 if __name__ == "__main__":
     print(deli(10, 2))
-    print(4)
