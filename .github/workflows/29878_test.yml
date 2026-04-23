@@ -1,0 +1,136 @@
+name: 29878 - Testiranje
+
+# Skripta se proži samo ob potisku na vejo main
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  # POSEL 1: Preveri, ali testne skripte sploh obstajajo
+  preveri-teste:
+    name: Preveri obstoj testnih skript
+    runs-on: self-hosted
+
+    steps:
+      # Korak 1: Prenesi izvorno kodo iz repozitorija
+      - name: Checkout kode
+        uses: actions/checkout@v4
+
+      # Korak 2: Poišči testne datoteke (test_*.py ali *_test.py)
+      # Standardno napako preusmeri v datoteko napaka.txt
+      # Če testnih datotek ni, zapiše napako v napaka.txt in posel spodleti
+      - name: Iskanje testnih datotek
+        run: |
+          echo "Iščem testne datoteke v repozitoriju..."
+
+          # Poišči vse testne datoteke po konvenciji pytest (test_*.py ali *_test.py)
+          TEST_FILES=$(find . -name "test_*.py" -o -name "*_test.py" 2>napaka.txt)
+
+          if [ -z "$TEST_FILES" ]; then
+            # Ni testnih datotek - zapiši napako in izhodi z napako
+            echo "NAPAKA: V repozitoriju ni bilo najdenih nobenih testnih datotek (test_*.py / *_test.py)!" | tee -a napaka.txt
+            exit 1
+          else
+            echo "Najdene testne datoteke:"
+            echo "$TEST_FILES"
+            # Počisti napaka.txt - ni napak
+            > napaka.txt
+            echo "Preverjanje uspešno - testne datoteke obstajajo."
+          fi
+
+      # Korak 3: Naloži datoteko napaka.txt kot artefakt
+      - name: Naloži artefakt napaka.txt
+        if: always()   # Naloži artefakt ne glede na uspeh/neuspeh koraka
+        uses: actions/upload-artifact@v4
+        with:
+          name: napaka-txt       # Ime artefakta
+          path: napaka.txt       # Pot do datoteke
+          retention-days: 1      # Hranimo samo 1 dan (začasni artefakt)
+
+  # ============================================================
+  # POSEL 2: Pripravi okolje in poženi teste
+  # Odvisen od posla 'preveri-teste' - če ta spodleti, se ta ne izvede
+  # ============================================================
+  pozeni-teste:
+    name: Pripravi okolje in poženi teste
+    runs-on: self-hosted       # Teče na našem lokalnem self-hosted runnerju
+    needs: preveri-teste       # Čaka na uspešen zaključek posla 'preveri-teste'
+
+    # ============================================================
+    # MATRICA: Testi se izvedejo na več različnih verzijah Pythona
+    # To zagotavlja kompatibilnost kode z različnimi verzijami
+    # ============================================================
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]   # Testiraj na 3 verzijah Pythona
+      fail-fast: false   # Nadaljuj testiranje vseh verzij, tudi če ena spodleti
+
+    steps:
+      # Korak 1: Prenesi izvorno kodo iz repozitorija
+      - name: Checkout kode
+        uses: actions/checkout@v4
+
+      # Korak 2: Prenesi artefakt napaka.txt iz prvega posla
+      - name: Prenesi artefakt napaka.txt
+        uses: actions/download-artifact@v4
+        with:
+          name: napaka-txt   # Isto ime artefakta kot pri nalaganju
+
+      # Korak 3: Preveri vsebino napaka.txt
+      # Če datoteka ni prazna, posel prekinemo - v prvem poslu je prišlo do napake
+      - name: Preveri vsebino napaka.txt
+        run: |
+          echo "Preverjam vsebino napaka.txt..."
+
+          if [ -s napaka.txt ]; then
+            echo "NAPAKA: Datoteka napaka.txt ni prazna. Vsebina:"
+            cat napaka.txt
+            echo "Testiranje se prekinja zaradi napake v prvem poslu."
+            exit 1
+          else
+            echo "Datoteka napaka.txt je prazna - nadaljujem s testiranjem."
+          fi
+
+      # Korak 4: Nastavi Python okolje glede na matrično verzijo
+      - name: Nastavi Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}   # Verzija iz matrice
+
+      # Korak 5: Namesti odvisnosti iz requirements.txt (če obstaja)
+      - name: Namesti odvisnosti
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov   # Namesti pytest in pokritost kode
+
+          # Namesti projektne odvisnosti, če datoteka obstaja
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+            echo "Nameščene odvisnosti iz requirements.txt"
+          else
+            echo "Datoteka requirements.txt ne obstaja - preskačem namestitev odvisnosti"
+          fi
+
+      # Korak 6: Poženi teste z pytest in ustvari poročilo o pokritosti
+      - name: Poženi pytest teste (Python ${{ matrix.python-version }})
+        run: |
+          echo "Zaganjam teste za Python ${{ matrix.python-version }}..."
+
+          # Poženi pytest z verbose izpisom in poročilom o pokritosti kode
+          pytest --verbose \
+                 --tb=short \
+                 --cov=. \
+                 --cov-report=term-missing \
+                 2>> napaka.txt
+
+          echo "Testi uspešno zaključeni za Python ${{ matrix.python-version }}."
+
+      # Korak 7: Naloži posodobljeni napaka.txt po testiranju
+      - name: Naloži posodobljeni artefakt napaka.txt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: napaka-txt-po-testih-${{ matrix.python-version }}
+          path: napaka.txt
+          retention-days: 1

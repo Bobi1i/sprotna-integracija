@@ -1,0 +1,110 @@
+# ============================================================
+# 29878_deploy.yml
+# Namen: Dostava (CD) - pakiranje v Docker in objava na DockerHub
+# Sproži se: ob vsakem potisku na vejo 'main',
+#            SAMO če je skripta 29878_test.yml uspešno zaključena
+# Avtor: 29878
+# ============================================================
+
+name: 29878 - Docker Build & Deploy
+
+# Skripta se proži samo ob potisku na vejo main
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  # ============================================================
+  # POSEL: Preveri napake, zgradi Docker sliko in jo potisni na DockerHub
+  # ============================================================
+  docker-build-push:
+    name: Zgradi in objavi Docker zabojnik
+    runs-on: self-hosted   # Teče na našem lokalnem self-hosted runnerju
+
+    # Pogoj: ta posel se izvede SAMO, če je workflow 29878_test.yml
+    # uspešno zaključen (vsi posli z statusom 'success')
+    # Preverimo artefakt napaka.txt - mora biti prazen
+    steps:
+
+      # Korak 1: Prenesi izvorno kodo iz repozitorija
+      - name: Checkout kode
+        uses: actions/checkout@v4
+
+      # Korak 2: Prenesi artefakt napaka.txt iz testnega workflowa
+      # Artefakt je bil ustvarjen v skripti 29878_test.yml
+      - name: Prenesi artefakt napaka.txt (iz testnega workflow-a)
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: 29878_test.yml      # Ime testne skripte
+          name: napaka-txt              # Ime artefakta iz testne skripte
+          branch: main                  # Samo z veje main
+
+      # Korak 3: Preveri vsebino napaka.txt
+      # Če ni prazen, pomeni da so testi spodleteli - deploy se prekine
+      - name: Preveri napaka.txt pred deployem
+        run: |
+          echo "Preverjam artefakt napaka.txt pred deployem..."
+
+          if [ -s napaka.txt ]; then
+            echo "NAPAKA: Testiranje ni uspelo! Vsebina napaka.txt:"
+            cat napaka.txt
+            echo "Docker deploy se prekinja - koda ni prestala testov!"
+            exit 1
+          else
+            echo "Artefakt napaka.txt je prazen - koda je prestala teste."
+            echo "Nadaljujem z Docker build & push..."
+          fi
+
+      # Korak 4: Nastavi QEMU za podporo različnih arhitektur (npr. ARM)
+      - name: Nastavi QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Korak 5: Nastavi Docker Buildx za napredno gradnjo slik
+      - name: Nastavi Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Korak 6: Prijava na DockerHub z uporabo GitHub Secrets
+      # DOCKERHUB_USERNAME in DOCKERHUB_TOKEN morata biti nastavljena
+      # v GitHub repozitoriju: Settings → Secrets and variables → Actions
+      - name: Prijava na DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}   # DockerHub uporabniško ime (iz Secrets)
+          password: ${{ secrets.DOCKERHUB_TOKEN }}       # DockerHub access token (iz Secrets)
+
+      # Korak 7: Pripravi metapodatke za Docker sliko (ime, oznake/tagi)
+      # Samodejno ustvari tag 'latest' in tag z SHA commitom
+      - name: Pripravi Docker metapodatke (tagi in oznake)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/29878-app   # Ime slike na DockerHub
+          tags: |
+            type=raw,value=latest                         # Vedno posodobi 'latest' tag
+            type=sha,prefix=sha-,format=short             # Tag z Git commit SHA
+
+      # Korak 8: Zgradi Docker sliko in jo potisni na DockerHub
+      - name: Zgradi in potisni Docker sliko na DockerHub
+        uses: docker/build-push-action@v5
+        with:
+          context: .                        # Kontekst gradnje je koren repozitorija
+          file: ./Dockerfile                # Pot do Dockerfile
+          push: true                        # Potisni sliko na DockerHub
+          tags: ${{ steps.meta.outputs.tags }}        # Tagi iz prejšnjega koraka
+          labels: ${{ steps.meta.outputs.labels }}    # Oznake iz prejšnjega koraka
+          platforms: linux/amd64            # Ciljna arhitektura (64-bit Linux)
+          cache-from: type=gha             # Uporabi GitHub Actions cache za hitrejšo gradnjo
+          cache-to: type=gha,mode=max      # Shrani cache za naslednje zagone
+
+      # Korak 9: Izpiši informacije o objavljeni sliki
+      - name: Izpis podatkov o objavljeni sliki
+        run: |
+          echo "=============================================="
+          echo "Docker slika uspešno objavljena na DockerHub!"
+          echo "Repozitorij: ${{ secrets.DOCKERHUB_USERNAME }}/29878-app"
+          echo "Tagi: ${{ steps.meta.outputs.tags }}"
+          echo "=============================================="
+          echo "Za prenos slike uporabi:"
+          echo "  docker pull ${{ secrets.DOCKERHUB_USERNAME }}/29878-app:latest"
